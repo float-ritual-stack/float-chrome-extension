@@ -1,4 +1,4 @@
-import { formatConversation, formatForOutliner } from "../lib/formatter.js";
+import { formatConversation, formatForOutliner, formatBundle } from "../lib/formatter.js";
 
 const statusEl = document.getElementById("status");
 const metaEl = document.getElementById("meta");
@@ -7,6 +7,7 @@ const metaMessages = document.getElementById("metaMessages");
 const metaTime = document.getElementById("metaTime");
 const copyBtn = document.getElementById("copyBtn");
 const outlinerBtn = document.getElementById("outlinerBtn");
+const bundleBtn = document.getElementById("bundleBtn");
 const downloadBtn = document.getElementById("downloadBtn");
 const toast = document.getElementById("toast");
 
@@ -45,6 +46,7 @@ async function init() {
     statusEl.className = "status ready";
     copyBtn.disabled = false;
     outlinerBtn.disabled = false;
+    bundleBtn.disabled = false;
     copyBtn.textContent = "Fetch & Copy";
     downloadBtn.style.display = "block";
     downloadBtn.textContent = "Fetch & Download .md";
@@ -195,6 +197,7 @@ outlinerBtn.addEventListener("click", async () => {
     const captured = await ensureCapture();
     if (!captured) {
       outlinerBtn.disabled = false;
+    bundleBtn.disabled = false;
       outlinerBtn.textContent = "Export for Outliner";
       return;
     }
@@ -233,9 +236,93 @@ outlinerBtn.addEventListener("click", async () => {
     showToast("Export failed: " + err.message, true);
   } finally {
     outlinerBtn.disabled = false;
+    bundleBtn.disabled = false;
     outlinerBtn.textContent = "Export for Outliner";
   }
 });
+
+bundleBtn.addEventListener("click", async () => {
+  if (!pageInfo?.conversationId) return;
+
+  try {
+    bundleBtn.disabled = true;
+    bundleBtn.textContent = "Building bundle...";
+
+    const captured = await ensureCapture();
+    if (!captured) {
+      bundleBtn.disabled = false;
+      bundleBtn.textContent = "Download Bundle (.zip)";
+      return;
+    }
+
+    const result = await chrome.runtime.sendMessage({
+      type: "GET_CAPTURE_DATA",
+      conversationId: pageInfo.conversationId,
+    });
+
+    if (!result?.ok) {
+      showToast("Export failed: " + (result?.error || "unknown"), true);
+      return;
+    }
+
+    const bundle = formatBundle(result.data, {
+      conversationId: result.conversationId,
+      name: result.name,
+    });
+
+    // Load JSZip dynamically
+    const JSZip = await loadJSZip();
+    const zip = new JSZip();
+
+    // Add markdown
+    zip.file("conversation.md", bundle.markdown);
+
+    // Add extracted files
+    for (const file of bundle.files) {
+      if (file.type === "base64") {
+        zip.file(file.path, file.data, { base64: true });
+      } else {
+        zip.file(file.path, file.data);
+      }
+    }
+
+    // Generate and download
+    const blob = await zip.generateAsync({ type: "blob" });
+    const slug = (result.name || pageInfo.conversationId)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .slice(0, 60);
+    const filename = `claude-${slug}-${dateStamp()}.zip`;
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    const fileCount = bundle.files.length;
+    const sizeMB = (blob.size / 1024 / 1024).toFixed(1);
+    showToast(`Bundle: ${fileCount} files, ${sizeMB}MB`);
+  } catch (err) {
+    showToast("Bundle failed: " + err.message, true);
+  } finally {
+    bundleBtn.disabled = false;
+    bundleBtn.textContent = "Download Bundle (.zip)";
+  }
+});
+
+async function loadJSZip() {
+  if (window.JSZip) return window.JSZip;
+  // Load from vendored file
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "../lib/jszip.min.js";
+    script.onload = () => resolve(window.JSZip);
+    script.onerror = () => reject(new Error("Failed to load JSZip"));
+    document.head.appendChild(script);
+  });
+}
 
 function formatTime(iso) {
   if (!iso) return "";

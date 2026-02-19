@@ -61,6 +61,7 @@ function showCaptured(status) {
   statusEl.className = "status captured";
   copyBtn.disabled = false;
   outlinerBtn.disabled = false;
+  bundleBtn.disabled = false;
   copyBtn.textContent = "Copy to Clipboard";
   downloadBtn.style.display = "block";
   downloadBtn.textContent = "Download .md";

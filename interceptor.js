@@ -65,6 +65,10 @@
       }
 
       const data = await resp.json();
+
+      // Fetch images and convert to base64 data URIs
+      await embedFiles(data, orgId);
+
       postCapture(url, data);
     } catch (err) {
       window.postMessage(
@@ -73,6 +77,73 @@
       );
     }
   });
+
+  async function embedFiles(data, orgId) {
+    const messages = data.chat_messages || [];
+    let imageCount = 0;
+    let textCount = 0;
+
+    for (const msg of messages) {
+      const files = msg.files_v2 || msg.files || [];
+      if (!files.length) continue;
+
+      for (const file of files) {
+        const uuid = file.file_uuid || file.uuid;
+        if (!uuid) continue;
+
+        try {
+          if (file.file_kind === "image") {
+            // Fetch image preview as base64
+            const previewUrl = file.preview_url || `/api/${orgId}/files/${uuid}/preview`;
+            const imgResp = await originalFetch(previewUrl);
+            if (imgResp.ok) {
+              const blob = await imgResp.blob();
+              const base64 = await blobToBase64(blob);
+              file._embedded_base64 = base64;
+              file._embedded_media_type = blob.type || "image/png";
+              imageCount++;
+            }
+          } else if (file.file_kind === "text" || file.file_kind === "document") {
+            // Fetch text content (PDFs, code files, etc.)
+            const previewUrl = file.preview_url || `/api/${orgId}/files/${uuid}/preview`;
+            const textResp = await originalFetch(previewUrl);
+            if (textResp.ok) {
+              const contentType = textResp.headers.get("content-type") || "";
+              if (contentType.includes("text") || contentType.includes("json")) {
+                file._embedded_text = await textResp.text();
+              } else {
+                // Binary doc (PDF etc) — base64
+                const blob = await textResp.blob();
+                file._embedded_base64 = await blobToBase64(blob);
+                file._embedded_media_type = blob.type;
+              }
+              textCount++;
+            }
+          }
+        } catch (err) {
+          console.warn(`[float-export] failed to embed file ${file.file_name}:`, err.message);
+        }
+      }
+    }
+
+    if (imageCount || textCount) {
+      console.log(`[float-export] embedded ${imageCount} images, ${textCount} text files`);
+    }
+  }
+
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        // Strip the data:...;base64, prefix — we'll reconstruct it
+        const result = reader.result;
+        const base64 = result.split(",")[1];
+        resolve(base64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
 
   function extractOrgId() {
     // Try cookie first

@@ -61,6 +61,26 @@ async function handleCapture(message, tabId) {
   console.log(
     `[float-export] stored ${message.data?.chat_messages?.length || "?"} messages for ${message.conversationId}`
   );
+
+  // Evict old captures — keep last 5
+  await evictOldCaptures(5);
+}
+
+async function evictOldCaptures(keepCount) {
+  const all = await chrome.storage.local.get(null);
+  const captures = Object.entries(all)
+    .filter(([k]) => k.startsWith("conv_"))
+    .map(([k, v]) => ({ key: k, capturedAt: v.capturedAt || "" }))
+    .sort((a, b) => b.capturedAt.localeCompare(a.capturedAt));
+
+  if (captures.length <= keepCount) return;
+
+  const toRemove = captures.slice(keepCount).map((c) => c.key);
+  // Also remove matching meta keys
+  const metaKeys = toRemove.map((k) => k.replace("conv_", "meta_"));
+  await chrome.storage.local.remove([...toRemove, ...metaKeys]);
+
+  console.log(`[float-export] evicted ${toRemove.length} old captures`);
 }
 
 async function handlePageMeta(message) {
@@ -107,16 +127,18 @@ async function triggerExport(conversationId, tabId) {
       conversationId,
     });
 
-    // Wait a moment for the fetch to complete and data to arrive
+    // Wait for the fetch to complete and data to arrive
+    // Large conversations (100+ messages with tool calls) can take 15-30s
     return new Promise((resolve) => {
       let attempts = 0;
+      const maxAttempts = 240; // 60 seconds total (image-heavy convos need time)
       const check = async () => {
         attempts++;
         const status = await getStatus(conversationId);
         if (status.captured) {
           resolve({ ok: true, ...status });
-        } else if (attempts > 20) {
-          resolve({ ok: false, error: "Timeout waiting for data" });
+        } else if (attempts > maxAttempts) {
+          resolve({ ok: false, error: "Timeout waiting for data (30s)" });
         } else {
           setTimeout(check, 250);
         }

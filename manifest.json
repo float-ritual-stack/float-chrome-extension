@@ -5,6 +5,7 @@
   "description": "Export full Claude conversations (including tool calls, thinking blocks) via API intercept",
   "permissions": [
     "storage",
+    "unlimitedStorage",
     "activeTab"
   ],
   "host_permissions": [

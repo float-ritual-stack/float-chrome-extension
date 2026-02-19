@@ -80,8 +80,9 @@ async function ensureCapture() {
 
   if (status?.captured) return true;
 
-  // Trigger fetch
-  statusEl.textContent = "Fetching conversation...";
+  // Trigger fetch — large conversations can take 15-30s
+  statusEl.textContent = "Fetching + embedding images (may take 60s)...";
+  statusEl.className = "status ready";
   const result = await chrome.runtime.sendMessage({
     type: "TRIGGER_EXPORT",
     conversationId: pageInfo.conversationId,

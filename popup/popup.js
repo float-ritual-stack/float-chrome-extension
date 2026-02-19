@@ -247,14 +247,10 @@ bundleBtn.addEventListener("click", async () => {
 
   try {
     bundleBtn.disabled = true;
-    bundleBtn.textContent = "Building bundle...";
+    bundleBtn.textContent = "Fetching with images...";
 
-    const captured = await ensureCapture();
-    if (!captured) {
-      bundleBtn.disabled = false;
-      bundleBtn.textContent = "Download Bundle (.zip)";
-      return;
-    }
+    // Always force re-fetch for bundle (need fresh data with embedded images)
+    await forceRefetch(pageInfo.conversationId);
 
     const result = await chrome.runtime.sendMessage({
       type: "GET_CAPTURE_DATA",
@@ -266,6 +262,8 @@ bundleBtn.addEventListener("click", async () => {
       return;
     }
 
+    bundleBtn.textContent = "Building zip...";
+
     const bundle = formatBundle(result.data, {
       conversationId: result.conversationId,
       name: result.name,
@@ -275,8 +273,12 @@ bundleBtn.addEventListener("click", async () => {
     const JSZip = await loadJSZip();
     const zip = new JSZip();
 
-    // Add markdown
-    zip.file("conversation.md", bundle.markdown);
+    // Add markdown — named after conversation
+    const mdSlug = (result.name || "conversation")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .slice(0, 60);
+    zip.file(`${mdSlug}.md`, bundle.markdown);
 
     // Add extracted files
     for (const file of bundle.files) {
@@ -312,6 +314,24 @@ bundleBtn.addEventListener("click", async () => {
     bundleBtn.textContent = "Download Bundle (.zip)";
   }
 });
+
+async function forceRefetch(conversationId) {
+  // Clear old capture so TRIGGER_EXPORT does a fresh fetch (with image embedding)
+  await chrome.storage.local.remove([`conv_${conversationId}`]);
+  statusEl.textContent = "Fetching + embedding images (may take 60s)...";
+  statusEl.className = "status ready";
+
+  const result = await chrome.runtime.sendMessage({
+    type: "TRIGGER_EXPORT",
+    conversationId,
+  });
+
+  if (!result?.ok) {
+    throw new Error(result?.error || "Fetch failed");
+  }
+
+  showCaptured(result);
+}
 
 async function loadJSZip() {
   if (window.JSZip) return window.JSZip;
